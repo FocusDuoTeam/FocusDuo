@@ -1,0 +1,883 @@
+openapi: 3.1.0
+info:
+  title: FocusDuo REST API
+  version: 1.0.0
+  description: |
+    Agreed FocusDuo v1 protocol. Source of truth: ../FOCUSDUO_CONTRACT_V1.txt.
+    All timestamps are ISO 8601 UTC ending in Z; UUIDs are strings; JSON is camelCase.
+    Every room mutation returns HTTP 200 RoomSnapshot and requires Idempotency-Key.
+    Existing-room mutations also require X-Room-Revision. Create/join are exempt.
+    No expectedRevision field, If-Match, cookie authentication, JWT, STOMP or SockJS.
+
+    RAW WEBSOCKET (not an OpenAPI HTTP operation):
+    ws://127.0.0.1:8090/ws/rooms/{roomId}, Authorization: Bearer <accessToken>
+    in the HTTP handshake. Only historical/current room members may connect.
+    First message and subsequent changes: {"type":"ROOM_SNAPSHOT","data":RoomSnapshot}.
+    Subscription is registered before initial snapshot reading. Changes publish after commit.
+    Commands use REST; no JSON client command or tick protocol exists. Ping/pong are control frames.
+    Expired/revoked sessions close with code 4401. Close delivers CLOSED snapshot then closes sockets.
+    Reconnect must receive a new full snapshot before editing. Ignore older revisions within roomId;
+    equal revisions do not roll back data, though fresher serverNow can refine the local clock.
+    HTTP/WS are for local development; use HTTPS/WSS for remote connections.
+servers:
+  - url: http://127.0.0.1:8090/api/v1
+security:
+  - bearerAuth: []
+tags:
+  - name: Auth
+  - name: Rooms
+  - name: Tasks
+  - name: Rounds
+  - name: History
+paths:
+  /auth/register:
+    post:
+      tags: [Auth]
+      operationId: register
+      security: []
+      summary: Register a user and create a bearer session
+      requestBody:
+        $ref: '#/components/requestBodies/Register'
+      responses:
+        '201':
+          $ref: '#/components/responses/AuthSession'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /auth/login:
+    post:
+      tags: [Auth]
+      operationId: login
+      security: []
+      summary: Authenticate username/password and create a bearer session
+      requestBody:
+        $ref: '#/components/requestBodies/Login'
+      responses:
+        '200':
+          $ref: '#/components/responses/AuthSession'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /auth/logout:
+    post:
+      tags: [Auth]
+      operationId: logout
+      summary: Revoke current bearer session; room remains open
+      responses:
+        '204':
+          description: Session revoked; its open sockets close with 4401
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /me:
+    get:
+      tags: [Auth]
+      operationId: getMe
+      responses:
+        '200':
+          description: Authenticated user
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /rooms/current:
+    get:
+      tags: [Rooms]
+      operationId: getCurrentRoom
+      summary: Get own open room or null
+      responses:
+        '200':
+          description: Current room wrapper
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CurrentRoom'
+              examples:
+                current:
+                  externalValue: ./fixtures/room-current.json
+                none:
+                  value: {room: null}
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /rooms:
+    post:
+      tags: [Rooms]
+      operationId: createRoom
+      summary: Create room with owner, empty goal/tasks, revision 1 and round null
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        $ref: '#/components/requestBodies/CreateRoom'
+      responses:
+        '200':
+          $ref: '#/components/responses/RoomSnapshot'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /rooms/join:
+    post:
+      tags: [Rooms]
+      operationId: joinRoom
+      summary: Join by code; existing membership does not consume another seat
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        $ref: '#/components/requestBodies/JoinRoom'
+      responses:
+        '200':
+          $ref: '#/components/responses/RoomSnapshot'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /rooms/{roomId}:
+    parameters:
+      - $ref: '#/components/parameters/RoomId'
+    get:
+      tags: [Rooms]
+      operationId: getRoom
+      summary: Read room; historical members may read CLOSED rooms
+      responses:
+        '200':
+          $ref: '#/components/responses/RoomSnapshot'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /rooms/{roomId}/settings:
+    parameters:
+      - $ref: '#/components/parameters/RoomId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      - $ref: '#/components/parameters/RoomRevision'
+    patch:
+      tags: [Rooms]
+      operationId: updateSettings
+      summary: Owner changes durations outside RUNNING/PAUSED
+      requestBody:
+        $ref: '#/components/requestBodies/Settings'
+      responses:
+        '200':
+          $ref: '#/components/responses/RoomSnapshot'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /rooms/{roomId}/me:
+    parameters:
+      - $ref: '#/components/parameters/RoomId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      - $ref: '#/components/parameters/RoomRevision'
+    patch:
+      tags: [Rooms]
+      operationId: updateGoal
+      summary: Change own goal
+      requestBody:
+        $ref: '#/components/requestBodies/Goal'
+      responses:
+        '200':
+          $ref: '#/components/responses/RoomSnapshot'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /rooms/{roomId}/tasks:
+    parameters:
+      - $ref: '#/components/parameters/RoomId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      - $ref: '#/components/parameters/RoomRevision'
+    post:
+      tags: [Tasks]
+      operationId: addTask
+      summary: Add own task with completed=false; maximum 20 per participant
+      requestBody:
+        $ref: '#/components/requestBodies/AddTask'
+      responses:
+        '200':
+          $ref: '#/components/responses/RoomSnapshot'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /rooms/{roomId}/tasks/{taskId}:
+    parameters:
+      - $ref: '#/components/parameters/RoomId'
+      - $ref: '#/components/parameters/TaskId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      - $ref: '#/components/parameters/RoomRevision'
+    patch:
+      tags: [Tasks]
+      operationId: updateTask
+      summary: Edit own task; at least one of title/completed is required
+      requestBody:
+        $ref: '#/components/requestBodies/UpdateTask'
+      responses:
+        '200':
+          $ref: '#/components/responses/RoomSnapshot'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    delete:
+      tags: [Tasks]
+      operationId: deleteTask
+      summary: Delete own task; no request body
+      responses:
+        '200':
+          $ref: '#/components/responses/RoomSnapshot'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /rooms/{roomId}/rounds:
+    parameters:
+      - $ref: '#/components/parameters/RoomId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      - $ref: '#/components/parameters/RoomRevision'
+    post:
+      tags: [Rounds]
+      operationId: startRound
+      summary: Owner starts FOCUS or BREAK
+      description: |
+        FOCUS requires two members and no RUNNING/PAUSED round.
+        BREAK is manual and requires the current last round to be COMPLETED FOCUS.
+      requestBody:
+        $ref: '#/components/requestBodies/StartRound'
+      responses:
+        '200':
+          $ref: '#/components/responses/RoomSnapshot'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /rooms/{roomId}/rounds/{roundId}/pause:
+    parameters:
+      - $ref: '#/components/parameters/RoomId'
+      - $ref: '#/components/parameters/RoundId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      - $ref: '#/components/parameters/RoomRevision'
+    post:
+      tags: [Rounds]
+      operationId: pauseRound
+      summary: Owner pauses current RUNNING round; no request body
+      responses:
+        '200':
+          $ref: '#/components/responses/RoomSnapshot'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /rooms/{roomId}/rounds/{roundId}/resume:
+    parameters:
+      - $ref: '#/components/parameters/RoomId'
+      - $ref: '#/components/parameters/RoundId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      - $ref: '#/components/parameters/RoomRevision'
+    post:
+      tags: [Rounds]
+      operationId: resumeRound
+      summary: Owner resumes current PAUSED round; no request body
+      responses:
+        '200':
+          $ref: '#/components/responses/RoomSnapshot'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /rooms/{roomId}/rounds/{roundId}/finish:
+    parameters:
+      - $ref: '#/components/parameters/RoomId'
+      - $ref: '#/components/parameters/RoundId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      - $ref: '#/components/parameters/RoomRevision'
+    post:
+      tags: [Rounds]
+      operationId: finishRound
+      summary: Owner finishes current RUNNING/PAUSED round as COMPLETED/MANUAL
+      description: No request body. Active elapsed time excludes pauses and is not forced to full duration.
+      responses:
+        '200':
+          $ref: '#/components/responses/RoomSnapshot'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /rooms/{roomId}/close:
+    parameters:
+      - $ref: '#/components/parameters/RoomId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      - $ref: '#/components/parameters/RoomRevision'
+    post:
+      tags: [Rooms]
+      operationId: closeRoom
+      summary: Either participant closes room for both; no request body
+      description: |
+        Frees active memberships but preserves historical membership and snapshots.
+        Active round becomes CANCELLED/ROOM_CLOSED. Already completed round is unchanged.
+        CLOSED-room mutations are forbidden. Disconnect and logout do not close rooms.
+      responses:
+        '200':
+          $ref: '#/components/responses/RoomSnapshot'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /history:
+    get:
+      tags: [History]
+      operationId: getHistory
+      summary: Last 50 own completed/cancelled rounds, no pagination in v1
+      description: Ordered by endedAt DESC with roundId as a stable secondary order.
+      responses:
+        '200':
+          description: Immutable round results containing task/goal copies at completion
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/History'
+              examples:
+                history:
+                  externalValue: ./fixtures/history.json
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /history/{roundId}:
+    parameters:
+      - $ref: '#/components/parameters/RoundId'
+    get:
+      tags: [History]
+      operationId: getHistoryItem
+      summary: Read immutable result; only participants of this round
+      responses:
+        '200':
+          description: Round result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HistoryItem'
+              examples:
+                result:
+                  externalValue: ./fixtures/history-item.json
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Opaque random access token. Not JWT. Sessions default to 24 hours.
+  parameters:
+    RoomId:
+      in: path
+      name: roomId
+      required: true
+      schema: {type: string, format: uuid}
+    TaskId:
+      in: path
+      name: taskId
+      required: true
+      schema: {type: string, format: uuid}
+    RoundId:
+      in: path
+      name: roundId
+      required: true
+      schema: {type: string, format: uuid}
+    IdempotencyKey:
+      in: header
+      name: Idempotency-Key
+      required: true
+      description: |
+        UUID scoped to authenticated user. Same method/path/body/original revision replays stored
+        successful result before revision/business checks, including concurrent duplicates.
+        Different request with same key is 409 IDEMPOTENCY_KEY_REUSED. New action uses a new key.
+      schema: {type: string, format: uuid}
+    RoomRevision:
+      in: header
+      name: X-Room-Revision
+      required: true
+      description: |
+        Revision from last applied snapshot. Expiry is materialized before version/state checks.
+        Conflict is 409 REVISION_CONFLICT with a committed snapshot for authorized room members.
+        Replay after network ambiguity must retain the original revision and Idempotency-Key.
+      schema: {type: integer, format: int64, minimum: 1}
+  requestBodies:
+    Register:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            required: [username, displayName, password]
+            properties:
+              username: {$ref: '#/components/schemas/UsernameInput'}
+              displayName: {$ref: '#/components/schemas/DisplayNameInput'}
+              password: {$ref: '#/components/schemas/Password'}
+    Login:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            required: [username, password]
+            properties:
+              username: {$ref: '#/components/schemas/UsernameInput'}
+              password: {$ref: '#/components/schemas/Password'}
+    CreateRoom:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            properties:
+              focusDurationSeconds: {$ref: '#/components/schemas/FocusDuration'}
+              breakDurationSeconds: {$ref: '#/components/schemas/BreakDuration'}
+    JoinRoom:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            required: [code]
+            properties:
+              code:
+                type: string
+                description: Trim + uppercase. Opaque code; client must not hardcode its length/format.
+    Settings:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            required: [focusDurationSeconds, breakDurationSeconds]
+            properties:
+              focusDurationSeconds: {$ref: '#/components/schemas/FocusDuration'}
+              breakDurationSeconds: {$ref: '#/components/schemas/BreakDuration'}
+    Goal:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            required: [goal]
+            properties:
+              goal: {type: string, maxLength: 240}
+    AddTask:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            required: [title]
+            properties:
+              title: {$ref: '#/components/schemas/TaskTitleInput'}
+    UpdateTask:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            minProperties: 1
+            properties:
+              title: {$ref: '#/components/schemas/TaskTitleInput'}
+              completed: {type: boolean}
+    StartRound:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            required: [kind]
+            properties:
+              kind: {$ref: '#/components/schemas/RoundKind'}
+  responses:
+    AuthSession:
+      description: User and newly issued bearer session
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/AuthSession'}
+          examples:
+            session:
+              externalValue: ./fixtures/auth-session.json
+    RoomSnapshot:
+      description: Full room snapshot; time may advance without a new revision
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/RoomSnapshot'}
+          examples:
+            running:
+              externalValue: ./fixtures/room-running.json
+            paused:
+              externalValue: ./fixtures/room-paused.json
+            resumed:
+              externalValue: ./fixtures/room-resumed.json
+            completed:
+              externalValue: ./fixtures/room-completed.json
+    ValidationError:
+      description: VALIDATION_ERROR; invalid JSON, fields, UUIDs or required headers
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+    Unauthorized:
+      description: UNAUTHORIZED; missing, invalid, expired or revoked bearer token, or invalid login
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+    Forbidden:
+      description: FORBIDDEN; room/round membership, task ownership or owner permission missing
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+    NotFound:
+      description: NOT_FOUND; requested resource or join code not found
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+    Conflict:
+      description: |
+        USERNAME_TAKEN, ROOM_FULL, ALREADY_IN_ROOM, ROOM_CLOSED, INVALID_STATE,
+        ROUND_NOT_CURRENT, REVISION_CONFLICT or IDEMPOTENCY_KEY_REUSED, as applicable.
+        Only REVISION_CONFLICT has non-null snapshot, and only for an authorized participant.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+          examples:
+            revisionConflict:
+              externalValue: ./fixtures/revision-conflict.json
+    InternalError:
+      description: INTERNAL_ERROR; requestId for diagnostics, no stack trace
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+  schemas:
+    UsernameInput:
+      type: string
+      description: Trim and lowercase, then 3-32 characters matching [a-z0-9_].
+    DisplayNameInput:
+      type: string
+      description: 2-40 characters after trim.
+    Password:
+      type: string
+      minLength: 10
+      maxLength: 128
+      writeOnly: true
+      description: No trim or case normalization.
+    TaskTitleInput:
+      type: string
+      description: 1-160 characters after trim.
+    FocusDuration:
+      type: integer
+      minimum: 300
+      maximum: 10800
+      multipleOf: 60
+      default: 1500
+    BreakDuration:
+      type: integer
+      minimum: 60
+      maximum: 3600
+      multipleOf: 60
+      default: 300
+    UtcInstant:
+      type: string
+      format: date-time
+      pattern: 'Z$'
+    RoundKind:
+      type: string
+      enum: [FOCUS, BREAK]
+    CompletionReason:
+      type: string
+      enum: [ELAPSED, MANUAL, ROOM_CLOSED]
+    User:
+      type: object
+      additionalProperties: false
+      required: [id, username, displayName]
+      properties:
+        id: {type: string, format: uuid}
+        username: {type: string, minLength: 3, maxLength: 32, pattern: '^[a-z0-9_]+$'}
+        displayName: {type: string, minLength: 2, maxLength: 40}
+    AuthSession:
+      type: object
+      additionalProperties: false
+      required: [user, accessToken, expiresAt]
+      properties:
+        user: {$ref: '#/components/schemas/User'}
+        accessToken: {type: string, description: Opaque token; keep in client memory only.}
+        expiresAt: {$ref: '#/components/schemas/UtcInstant'}
+    Task:
+      type: object
+      additionalProperties: false
+      required: [id, title, completed]
+      properties:
+        id: {type: string, format: uuid}
+        title: {type: string, minLength: 1, maxLength: 160}
+        completed: {type: boolean}
+    Participant:
+      type: object
+      additionalProperties: false
+      required: [userId, displayName, goal, tasks]
+      properties:
+        userId: {type: string, format: uuid}
+        displayName: {type: string, minLength: 2, maxLength: 40}
+        goal: {type: string, maxLength: 240}
+        tasks:
+          type: array
+          maxItems: 20
+          items: {$ref: '#/components/schemas/Task'}
+    RoomSnapshot:
+      type: object
+      additionalProperties: false
+      required: [roomId, code, ownerId, status, revision, serverNow, focusDurationSeconds, breakDurationSeconds, participants, round]
+      properties:
+        roomId: {type: string, format: uuid}
+        code: {type: string, description: Opaque room code.}
+        ownerId: {type: string, format: uuid}
+        status: {type: string, enum: [OPEN, CLOSED]}
+        revision: {type: integer, format: int64, minimum: 1}
+        serverNow: {$ref: '#/components/schemas/UtcInstant'}
+        focusDurationSeconds: {$ref: '#/components/schemas/FocusDuration'}
+        breakDurationSeconds: {$ref: '#/components/schemas/BreakDuration'}
+        participants:
+          type: array
+          minItems: 1
+          maxItems: 2
+          items: {$ref: '#/components/schemas/Participant'}
+        round:
+          anyOf:
+            - $ref: '#/components/schemas/Round'
+            - type: 'null'
+    CurrentRoom:
+      type: object
+      additionalProperties: false
+      required: [room]
+      properties:
+        room:
+          anyOf:
+            - $ref: '#/components/schemas/RoomSnapshot'
+            - type: 'null'
+    Round:
+      type: object
+      additionalProperties: false
+      required: [id, kind, status, durationSeconds, startedAt, endsAt, remainingMs, activeElapsedMs, endedAt, completionReason]
+      properties:
+        id: {type: string, format: uuid}
+        kind: {$ref: '#/components/schemas/RoundKind'}
+        status: {type: string, enum: [RUNNING, PAUSED, COMPLETED, CANCELLED]}
+        durationSeconds: {type: integer, minimum: 60, maximum: 10800, multipleOf: 60}
+        startedAt: {$ref: '#/components/schemas/UtcInstant'}
+        endsAt:
+          description: Deadline only for RUNNING; null for all other states.
+          anyOf:
+            - $ref: '#/components/schemas/UtcInstant'
+            - type: 'null'
+        remainingMs:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Frozen while PAUSED; zero in terminal states.
+        activeElapsedMs:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Actual active time excluding pauses, including early finish/cancel.
+        endedAt:
+          anyOf:
+            - $ref: '#/components/schemas/UtcInstant'
+            - type: 'null'
+        completionReason:
+          anyOf:
+            - $ref: '#/components/schemas/CompletionReason'
+            - type: 'null'
+    HistoryParticipant:
+      type: object
+      additionalProperties: false
+      required: [userId, displayName, goal, tasks, totalTaskCount, completedTaskCount]
+      properties:
+        userId: {type: string, format: uuid}
+        displayName: {type: string, minLength: 2, maxLength: 40}
+        goal: {type: string, maxLength: 240}
+        tasks:
+          type: array
+          maxItems: 20
+          items: {$ref: '#/components/schemas/Task'}
+        totalTaskCount: {type: integer, minimum: 0, maximum: 20}
+        completedTaskCount: {type: integer, minimum: 0, maximum: 20}
+    HistoryItem:
+      type: object
+      additionalProperties: false
+      required: [roundId, roomId, kind, status, completionReason, durationSeconds, startedAt, endedAt, activeElapsedMs, participants]
+      properties:
+        roundId: {type: string, format: uuid}
+        roomId: {type: string, format: uuid}
+        kind: {$ref: '#/components/schemas/RoundKind'}
+        status: {type: string, enum: [COMPLETED, CANCELLED]}
+        completionReason: {$ref: '#/components/schemas/CompletionReason'}
+        durationSeconds: {type: integer, minimum: 60, maximum: 10800, multipleOf: 60}
+        startedAt: {$ref: '#/components/schemas/UtcInstant'}
+        endedAt: {$ref: '#/components/schemas/UtcInstant'}
+        activeElapsedMs: {type: integer, format: int64, minimum: 0}
+        participants:
+          type: array
+          minItems: 2
+          maxItems: 2
+          items: {$ref: '#/components/schemas/HistoryParticipant'}
+    History:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          maxItems: 50
+          items: {$ref: '#/components/schemas/HistoryItem'}
+    Error:
+      type: object
+      additionalProperties: false
+      required: [code, message, requestId, fieldErrors, snapshot]
+      properties:
+        code:
+          type: string
+          enum: [VALIDATION_ERROR, UNAUTHORIZED, FORBIDDEN, NOT_FOUND, USERNAME_TAKEN, ROOM_FULL, ALREADY_IN_ROOM, ROOM_CLOSED, INVALID_STATE, ROUND_NOT_CURRENT, REVISION_CONFLICT, IDEMPOTENCY_KEY_REUSED, INTERNAL_ERROR]
+        message: {type: string}
+        requestId: {type: string}
+        fieldErrors:
+          type: object
+          additionalProperties: {type: string}
+        snapshot:
+          description: Non-null only for REVISION_CONFLICT returned to an authorized room member.
+          anyOf:
+            - $ref: '#/components/schemas/RoomSnapshot'
+            - type: 'null'
+    RoomEvent:
+      type: object
+      description: Raw JSON WebSocket server event, not an HTTP response or STOMP message.
+      additionalProperties: false
+      required: [type, data]
+      properties:
+        type: {type: string, const: ROOM_SNAPSHOT}
+        data: {$ref: '#/components/schemas/RoomSnapshot'}

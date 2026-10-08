@@ -1,0 +1,285 @@
+# IntelliJ IDEA HTTP Client. Run requests individually from top to bottom.
+# Response scripts retain tokens/ids/revision in memory; do not export their state.
+# Use new usernames for a fresh scenario or skip registration and run the login requests.
+# Examples are local development credentials only, never production credentials.
+@base = http://127.0.0.1:8090/api/v1
+@ownerUsername = alice_demo
+@partnerUsername = bob_demo
+@demoPassword = focusduo-demo-password
+
+### 1. Register owner -> 201 AuthSession
+POST {{base}}/auth/register
+Content-Type: application/json
+
+{"username":"{{ownerUsername}}","displayName":"Alice Demo","password":"{{demoPassword}}"}
+
+> {%
+client.test("Registered owner", function () { client.assert(response.status === 201); });
+if (response.status === 201) {
+  client.global.set("ownerToken", response.body.accessToken);
+  client.global.set("ownerId", response.body.user.id);
+}
+%}
+
+### 2. Register partner -> 201 AuthSession
+POST {{base}}/auth/register
+Content-Type: application/json
+
+{"username":"{{partnerUsername}}","displayName":"Bob Demo","password":"{{demoPassword}}"}
+
+> {%
+client.test("Registered partner", function () { client.assert(response.status === 201); });
+if (response.status === 201) client.global.set("partnerToken", response.body.accessToken);
+%}
+
+### Login owner (optional instead of registration on subsequent runs)
+POST {{base}}/auth/login
+Content-Type: application/json
+
+{"username":"{{ownerUsername}}","password":"{{demoPassword}}"}
+
+> {%
+if (response.status === 200) {
+  client.global.set("ownerToken", response.body.accessToken);
+  client.global.set("ownerId", response.body.user.id);
+}
+%}
+
+### Login partner (optional instead of registration on subsequent runs)
+POST {{base}}/auth/login
+Content-Type: application/json
+
+{"username":"{{partnerUsername}}","password":"{{demoPassword}}"}
+
+> {%
+if (response.status === 200) client.global.set("partnerToken", response.body.accessToken);
+%}
+
+### 3. Read own user
+GET {{base}}/me
+Authorization: Bearer {{ownerToken}}
+
+### 4. Create room -> 200, no X-Room-Revision
+# Fixed key lets you replay this exact request after a lost response. For a new
+# room/action use a new UUID, particularly after closing this room.
+POST {{base}}/rooms
+Authorization: Bearer {{ownerToken}}
+Idempotency-Key: 60000000-0000-4000-8000-000000000001
+Content-Type: application/json
+
+{"focusDurationSeconds":1500,"breakDurationSeconds":300}
+
+> {%
+client.test("Created room", function () { client.assert(response.status === 200); });
+if (response.status === 200) {
+  client.global.set("roomId", response.body.roomId);
+  client.global.set("roomCode", response.body.code);
+  client.global.set("revision", String(response.body.revision));
+}
+%}
+
+### 5. Join partner -> 200, no X-Room-Revision
+POST {{base}}/rooms/join
+Authorization: Bearer {{partnerToken}}
+Idempotency-Key: {{$uuid}}
+Content-Type: application/json
+
+{"code":"{{roomCode}}"}
+
+> {%
+if (response.status === 200) client.global.set("revision", String(response.body.revision));
+%}
+
+### 6. Recover current room after login/reconnect
+GET {{base}}/rooms/current
+Authorization: Bearer {{partnerToken}}
+
+> {%
+if (response.status === 200 && response.body.room !== null) {
+  client.global.set("roomId", response.body.room.roomId);
+  client.global.set("revision", String(response.body.room.revision));
+}
+%}
+
+### 7. Read snapshot / resynchronize revision
+GET {{base}}/rooms/{{roomId}}
+Authorization: Bearer {{ownerToken}}
+
+> {%
+if (response.status === 200) client.global.set("revision", String(response.body.revision));
+%}
+
+# Connect two native WebSocket clients before proceeding:
+# ws://127.0.0.1:8090/ws/rooms/{{roomId}}
+# Handshake header Authorization: Bearer <ownerToken> (or partnerToken).
+# Expect {"type":"ROOM_SNAPSHOT","data":<full RoomSnapshot>} first and after changes.
+# Use no STOMP/SockJS, query token, JSON subscribe command or seconds tick messages.
+
+### 8. Owner updates settings before active round
+PATCH {{base}}/rooms/{{roomId}}/settings
+Authorization: Bearer {{ownerToken}}
+Idempotency-Key: {{$uuid}}
+X-Room-Revision: {{revision}}
+Content-Type: application/json
+
+{"focusDurationSeconds":1500,"breakDurationSeconds":300}
+
+> {%
+if (response.status === 200) client.global.set("revision", String(response.body.revision));
+%}
+
+### 9. Owner changes own goal
+PATCH {{base}}/rooms/{{roomId}}/me
+Authorization: Bearer {{ownerToken}}
+Idempotency-Key: {{$uuid}}
+X-Room-Revision: {{revision}}
+Content-Type: application/json
+
+{"goal":"Finish backend integration"}
+
+> {%
+if (response.status === 200) client.global.set("revision", String(response.body.revision));
+%}
+
+### 10. Owner adds own task
+POST {{base}}/rooms/{{roomId}}/tasks
+Authorization: Bearer {{ownerToken}}
+Idempotency-Key: {{$uuid}}
+X-Room-Revision: {{revision}}
+Content-Type: application/json
+
+{"title":"Connect Kotlin client"}
+
+> {%
+if (response.status === 200) {
+  client.global.set("revision", String(response.body.revision));
+  const owner = response.body.participants.find(p => p.userId === client.global.get("ownerId"));
+  client.global.set("taskId", owner.tasks.find(t => t.title === "Connect Kotlin client").id);
+}
+%}
+
+### 11. Owner starts FOCUS after both participants joined
+POST {{base}}/rooms/{{roomId}}/rounds
+Authorization: Bearer {{ownerToken}}
+Idempotency-Key: {{$uuid}}
+X-Room-Revision: {{revision}}
+Content-Type: application/json
+
+{"kind":"FOCUS"}
+
+> {%
+if (response.status === 200) {
+  client.global.set("revision", String(response.body.revision));
+  client.global.set("roundId", response.body.round.id);
+  client.global.set("focusRoundId", response.body.round.id);
+}
+%}
+
+### 12. Task may change during active round
+PATCH {{base}}/rooms/{{roomId}}/tasks/{{taskId}}
+Authorization: Bearer {{ownerToken}}
+Idempotency-Key: {{$uuid}}
+X-Room-Revision: {{revision}}
+Content-Type: application/json
+
+{"completed":true}
+
+> {%
+if (response.status === 200) client.global.set("revision", String(response.body.revision));
+%}
+
+### 13. Pause concrete current round (no body)
+POST {{base}}/rooms/{{roomId}}/rounds/{{roundId}}/pause
+Authorization: Bearer {{ownerToken}}
+Idempotency-Key: {{$uuid}}
+X-Room-Revision: {{revision}}
+
+> {%
+if (response.status === 200) client.global.set("revision", String(response.body.revision));
+%}
+
+### 14. Resume concrete current round (no body)
+POST {{base}}/rooms/{{roomId}}/rounds/{{roundId}}/resume
+Authorization: Bearer {{ownerToken}}
+Idempotency-Key: {{$uuid}}
+X-Room-Revision: {{revision}}
+
+> {%
+if (response.status === 200) client.global.set("revision", String(response.body.revision));
+%}
+
+### 15. Finish early -> COMPLETED/MANUAL (no body)
+POST {{base}}/rooms/{{roomId}}/rounds/{{roundId}}/finish
+Authorization: Bearer {{ownerToken}}
+Idempotency-Key: {{$uuid}}
+X-Room-Revision: {{revision}}
+
+> {%
+if (response.status === 200) client.global.set("revision", String(response.body.revision));
+%}
+
+### 16. Both members see saved history
+GET {{base}}/history
+Authorization: Bearer {{partnerToken}}
+
+### 17. Concrete immutable result
+GET {{base}}/history/{{focusRoundId}}
+Authorization: Bearer {{ownerToken}}
+
+### 18. Delete current task; historical copy remains
+DELETE {{base}}/rooms/{{roomId}}/tasks/{{taskId}}
+Authorization: Bearer {{ownerToken}}
+Idempotency-Key: {{$uuid}}
+X-Room-Revision: {{revision}}
+
+> {%
+if (response.status === 200) client.global.set("revision", String(response.body.revision));
+%}
+
+### 19. Start BREAK manually after COMPLETED FOCUS
+POST {{base}}/rooms/{{roomId}}/rounds
+Authorization: Bearer {{ownerToken}}
+Idempotency-Key: {{$uuid}}
+X-Room-Revision: {{revision}}
+Content-Type: application/json
+
+{"kind":"BREAK"}
+
+> {%
+if (response.status === 200) {
+  client.global.set("revision", String(response.body.revision));
+  client.global.set("roundId", response.body.round.id);
+}
+%}
+
+### 20. Partner may close for both -> CANCELLED/ROOM_CLOSED for active BREAK
+POST {{base}}/rooms/{{roomId}}/close
+Authorization: Bearer {{partnerToken}}
+Idempotency-Key: {{$uuid}}
+X-Room-Revision: {{revision}}
+
+> {%
+if (response.status === 200) client.global.set("revision", String(response.body.revision));
+%}
+
+### 21. Historical members still read CLOSED snapshot
+GET {{base}}/rooms/{{roomId}}
+Authorization: Bearer {{ownerToken}}
+
+### 22. Active membership is released -> {"room":null}
+GET {{base}}/rooms/current
+Authorization: Bearer {{partnerToken}}
+
+### 23. Logout current owner token -> 204, closes associated sockets with 4401
+POST {{base}}/auth/logout
+Authorization: Bearer {{ownerToken}}
+
+### 24. Revoked token -> 401 UNAUTHORIZED
+GET {{base}}/me
+Authorization: Bearer {{ownerToken}}
+
+# To inspect conflicts, use a fresh action key but a stale revision while room is OPEN.
+# REVISION_CONFLICT includes an authorized committed snapshot. Do not automatically
+# retry with an updated revision; present the change to the user and use a new key
+# only for a newly confirmed action. Dynamic {{$uuid}} requests cannot model a lost
+# response replay: copy the original concrete key/body/revision and reuse them.

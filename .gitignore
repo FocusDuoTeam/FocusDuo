@@ -1,0 +1,18 @@
+# Build outputs and local tooling
+backend/target/
+.tools/
+.local/
+.idea/
+*.iml
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+*.log
+
+# Runtime state must never be committed
+backend/.local/
