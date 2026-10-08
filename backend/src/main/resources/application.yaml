@@ -1,0 +1,35 @@
+server:
+  port: ${SERVER_PORT:8090}
+  address: ${SERVER_ADDRESS:127.0.0.1}
+  error:
+    include-message: never
+    include-stacktrace: never
+spring:
+  application:
+    name: focusduo
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://127.0.0.1:5434/focusduo}
+    username: ${DB_USERNAME:focusduo}
+    password: ${DB_PASSWORD}
+    hikari:
+      maximum-pool-size: 12
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate.jdbc.time_zone: UTC
+  flyway:
+    enabled: true
+  jackson:
+    deserialization:
+      fail-on-unknown-properties: true
+      accept-float-as-int: false
+    serialization:
+      write-dates-as-timestamps: false
+focusduo:
+  session-ttl: ${FOCUSDUO_SESSION_TTL:PT24H}
+  maintenance-delay-ms: 1000
+logging:
+  level:
+    org.springframework.web.socket: INFO
