@@ -1,0 +1,29 @@
+{
+  "theme": "FocusDuo last approved discussion reference, soft slate-blue",
+  "colors": {
+    "background": "#29313C",
+    "sidebar": "#252C36",
+    "card": "#333D49",
+    "accent": "#A0B5D1",
+    "textPrimary": "#EBEEF2",
+    "textSecondary": "#B5BFCC"
+  },
+  "cornerRadiusDp": {
+    "card": 24,
+    "button": 14
+  },
+  "spacingDp": [
+    8,
+    16,
+    24,
+    32
+  ],
+  "layout": [
+    "floating left sidebar",
+    "wide typographic timer with horizontal progress",
+    "two equally sized task cards below",
+    "participant identity inside task-card headers"
+  ],
+  "referenceImage": "focusduo-reference.png",
+  "realDataRule": "All timer values, codes, participants, tasks and counts are dynamic in real mode."
+}

@@ -1,0 +1,69 @@
+{
+  "contractVersion": 1,
+  "files": [
+    {
+      "path": "PROMPT_BACKEND_JAVA.txt",
+      "sha256": "d7c5ed75ee9830df719956d21b3d75b8b88696618367c13ccd4525028319ec79"
+    },
+    {
+      "path": "PROMPT_DESKTOP_KOTLIN.txt",
+      "sha256": "59d396e1dd64a72528e4db3b1e5bcef924b9618b8d783fc167a63ad86a27eb75"
+    },
+    {
+      "path": "START_HERE.txt",
+      "sha256": "17e25c329d0ca2a2520ebbbfb5cf08efc1624422704888dcb25a96ac61943521"
+    },
+    {
+      "path": "docs/FOCUSDUO_CONTRACT_V1.txt",
+      "sha256": "ac8abe27faa80392beb3f162dd2b33e64bff9b4db63f706b4af3955a974e3768"
+    },
+    {
+      "path": "docs/contracts/fixtures/auth-session.json",
+      "sha256": "0a6aaeff199076753007cad860093f91e4d58192fb08d26fd1ca69e0a9e83185"
+    },
+    {
+      "path": "docs/contracts/fixtures/history-item.json",
+      "sha256": "ffd9ce8baf6ffc2189703a91d1c44edd133d7b013ac2d78ac37ec327fd4db18f"
+    },
+    {
+      "path": "docs/contracts/fixtures/history.json",
+      "sha256": "5b7c7e4ca4741409ec16d4344e413ad21096d26e8afa7280772176b89e2b79d9"
+    },
+    {
+      "path": "docs/contracts/fixtures/revision-conflict.json",
+      "sha256": "195ce18dcd6f857cf490d1e88ce5639dbed73e01e9404d4213a00ea874766cd0"
+    },
+    {
+      "path": "docs/contracts/fixtures/room-completed.json",
+      "sha256": "fc36f2a2ce9989c9ad39f0b5f5198a0e37d6714e53da37b59031502311789b88"
+    },
+    {
+      "path": "docs/contracts/fixtures/room-current.json",
+      "sha256": "110c562ae61e2a2a67d8a7eac746b0229dd39e15fa3f10ca17671e9fc88d1755"
+    },
+    {
+      "path": "docs/contracts/fixtures/room-event.json",
+      "sha256": "b909b9dc5cb8201a212bc621cf82949d02ce7e508c5c9ffcbc8780702c9b4ffd"
+    },
+    {
+      "path": "docs/contracts/fixtures/room-paused.json",
+      "sha256": "02cb363c4b2ae7dd6a7f9b029fb1bca3b5bc598ef7e69c71141cb474615708c7"
+    },
+    {
+      "path": "docs/contracts/fixtures/room-resumed.json",
+      "sha256": "a8bd994ed4fb56aa67b5bd889a982b42989d7a04bfd55a17f8289e7da5390ec3"
+    },
+    {
+      "path": "docs/contracts/fixtures/room-running.json",
+      "sha256": "4d1d83ac14e9e87b744472946b967965ee3be331d5e0e61986b966d180071e21"
+    },
+    {
+      "path": "docs/design/design-tokens.json",
+      "sha256": "63f9f780d0385eecd2855dcbbe7608a5b4b3c294eb4474a214052e215481f55b"
+    },
+    {
+      "path": "docs/design/focusduo-reference.png",
+      "sha256": "6151f0c458660d204c0110a8fb2998c8ba9f08664dd72ace7497baa7c6fc26fa"
+    }
+  ]
+}
