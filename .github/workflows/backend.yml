@@ -6,12 +6,16 @@ on:
       - 'backend/**'
       - 'docs/contracts/**'
       - 'docs/FOCUSDUO_CONTRACT_V1.txt'
+      - 'compose.yaml'
+      - '.env.example'
       - '.github/workflows/backend.yml'
   pull_request:
     paths:
       - 'backend/**'
       - 'docs/contracts/**'
       - 'docs/FOCUSDUO_CONTRACT_V1.txt'
+      - 'compose.yaml'
+      - '.env.example'
       - '.github/workflows/backend.yml'
   workflow_dispatch:
 
@@ -22,6 +26,13 @@ jobs:
   verify:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    env:
+      DB_USERNAME: focusduo
+      DB_PASSWORD: ci-only-disposable-password
+      DB_URL: jdbc:postgresql://127.0.0.1:5434/focusduo
+      SERVER_ADDRESS: 127.0.0.1
+      SERVER_PORT: '8090'
+      COMPOSE_PROJECT_NAME: focusduo-ci-${{ github.run_id }}-${{ github.run_attempt }}
     defaults:
       run:
         working-directory: backend
@@ -33,10 +44,34 @@ jobs:
           java-version: '21'
           cache: maven
           cache-dependency-path: backend/pom.xml
-      - name: Check Docker for required PostgreSQL integration tests
-        run: docker info
+      - name: Check build and smoke prerequisites
+        run: |
+          command -v curl || command -v wget
+          command -v unzip
+          python3 --version
+          docker info
+          docker compose version
       - name: Build and run unit plus PostgreSQL Testcontainers integration tests
         run: bash ./mvnw --batch-mode --no-transfer-progress verify
+      - name: Start a fresh Compose database
+        working-directory: .
+        run: docker compose up -d --wait --wait-timeout 90 db
+      - name: Exercise the packaged server through HTTP
+        working-directory: .
+        run: |
+          java -jar backend/target/focusduo-backend-0.1.0.jar > backend/target/smoke-server.log 2>&1 &
+          echo $! > backend/target/smoke-server.pid
+          python3 backend/scripts/smoke.py --wait-seconds 60
+      - name: Stop the smoke server and collect Compose logs
+        if: always()
+        working-directory: .
+        run: |
+          if [ -f backend/target/smoke-server.pid ]; then
+            kill "$(cat backend/target/smoke-server.pid)" 2>/dev/null || true
+          fi
+          mkdir -p backend/target
+          docker compose logs --no-color db > backend/target/compose-db.log 2>&1 || true
+          docker compose down --volumes --remove-orphans
       - name: Upload test reports
         if: always()
         uses: actions/upload-artifact@v4
@@ -45,6 +80,8 @@ jobs:
           path: |
             backend/target/surefire-reports/
             backend/target/failsafe-reports/
+            backend/target/smoke-server.log
+            backend/target/compose-db.log
           if-no-files-found: ignore
 
 # Desktop build belongs to desktop/. Its owner can add a separate workflow

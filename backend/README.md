@@ -2,6 +2,8 @@
 
 Java 21, Spring Boot 3.5.16, PostgreSQL 17, Flyway и Maven 3.9.11. Maven Wrapper 3.3.4 находится в этой папке; отдельная установка Maven не требуется. Первый запуск wrapper и сборка требуют доступа к Maven Central. SHA-256 дистрибутива Maven закреплён в `.mvn/wrapper/maven-wrapper.properties`.
 
+Для Linux/WSL дополнительно нужны Bash, `curl` или `wget` и **`unzip`**. Wrapper проверяет закреплённый ZIP-дистрибутив; отсутствие `unzip` нужно исправить установкой утилиты, сохранив checksum. Для Docker-проверок нужны работающий Docker Engine и Compose v2. HTTP smoke использует Python 3.9+ без сторонних пакетов.
+
 ## Запуск в PowerShell
 
 Из корня репозитория, с установленными Java 21 и Docker с Linux containers:
@@ -28,7 +30,7 @@ Set-Location backend
 cp .env.example .env
 # Отредактируйте .env и замените DB_PASSWORD своим локальным паролем.
 set -a
-. ./.env
+. <(sed 's/\r$//' .env)
 set +a
 docker compose up -d --wait db
 cd backend
@@ -37,7 +39,38 @@ bash ./mvnw spring-boot:run
 
 `.env` автоматически читает Docker Compose, но не Java-процесс: поэтому команды выше экспортируют переменные в текущую оболочку. Формат примера использует простые `KEY=value`; если меняете пароль, избегайте синтаксиса оболочки либо задавайте переменные непосредственно в оболочке.
 
+В Bash `sed` убирает окончания CRLF только из читаемого потока, чтобы работал и `.env`, созданный в Windows. Сам файл не изменяется.
+
 Первый запуск применяет Flyway-миграции. Hibernate проверяет схему, а не создаёт её. Compose публикует только `127.0.0.1:5434`, создаёт базу `focusduo` и собственный volume `focusduo_focusduo_data`. Прочие локальные базы не используются. Для остановки: `docker compose stop db` из корня; данные сохраняются. Изменение пароля в `.env` не изменяет пароль в уже инициализированной базе.
+
+## Запуск в WSL при отсутствии Docker в Windows
+
+На текущей машине установлен дистрибутив WSL `Ubuntu` (Ubuntu 26.04), Docker Engine 29.1.3, Compose 2.40.3 и Java 21.0.12.1. Docker доступен под `root`; членство обычного пользователя в группах не менялось. Из PowerShell откройте это окружение:
+
+```powershell
+wsl -d Ubuntu -u root
+```
+
+Далее в Bash используйте существующий `.env`, подготовленный по примеру выше; не заменяйте его повторным копированием:
+
+```bash
+cd /mnt/c/Daniyar/MyProjects/FocusDuo
+set -a
+. <(sed 's/\r$//' .env)
+set +a
+docker info
+docker compose up -d --wait db
+unset FOCUSDUO_TEST_DB_URL FOCUSDUO_TEST_DB_USERNAME FOCUSDUO_TEST_DB_PASSWORD
+cd backend
+bash ./mvnw --batch-mode --no-transfer-progress verify
+java -Djava.net.preferIPv4Stack=true -jar target/focusduo-backend-0.1.0.jar
+```
+
+Если Docker-служба после перезапуска WSL остановлена, запустите её командой `service docker start` и повторите `docker info`. Путь `/mnt/c/...` замените на путь своей рабочей копии. Testcontainers в `verify` создаёт отдельную тестовую БД; последующий JAR использует Compose-БД на порту 5434.
+
+Параметр `-Djava.net.preferIPv4Stack=true` нужен в проверенной WSL-конфигурации для доступа из Windows через `http://127.0.0.1:8090`: без него Java открывала IPv6-mapped socket и Windows-клиент получал timeout. HTTP smoke внутри WSL прошёл без этого параметра; из Windows с Python 3.14 — после запуска JAR с ним. Для повторения откройте вторую оболочку и запустите smoke из раздела «Сборка и проверки». Доступ с другого ПК зависит также от сетевого режима WSL и правил Windows; LAN-маршрут пока не подтверждён.
+
+Если JAR или Maven запускаются **нативно в Windows**, а PostgreSQL — в WSL, оставьте WSL-терминал открытым на всё время работы. На этой машине после завершения последнего активного WSL-вызова дистрибутив останавливался вместе с Docker: одной работающей Docker-службы было недостаточно, и Windows получала отказ подключения к 5434. При запуске JAR прямо в WSL активный процесс уже удерживает окружение.
 
 ## Переменные окружения
 
@@ -86,6 +119,22 @@ java -Djdk.net.unixdomain.tmpdir=C:/Daniyar/MyProjects/FocusDuo/backend/target -
 Путь должен соответствовать вашей рабочей копии; это настройка временной папки JDK, авторизация приложения от неё не меняется.
 
 `verify` запускает `*IT` через Maven Failsafe. По умолчанию тесты поднимают настоящий PostgreSQL 17.11 через Testcontainers. Отсутствие Docker является ошибкой такого прогона, а не тихим пропуском тестов. CI на GitHub исполняет именно `verify` на Ubuntu с Docker. H2 не используется.
+
+Для проверки уже работающего JAR из корня репозитория:
+
+```bash
+python3 backend/scripts/smoke.py --base-url http://127.0.0.1:8090 --wait-seconds 60
+```
+
+Проверенная команда из PowerShell, также из корня репозитория:
+
+```powershell
+py -3 backend/scripts/smoke.py --base-url http://127.0.0.1:8090 --wait-seconds 60
+```
+
+Скрипт выполняет полный HTTP-сценарий двух пользователей, повторяет сохранённые запросы, проверяет историю и отзывает обе сессии. Он создаёт тестовые аккаунты и историю в выбранной БД; записи сохраняются. Подробности и границы проверки — в [scripts/README.md](scripts/README.md). WebSocket, управляемое время, гонки и рестарт покрываются Maven integration tests.
+
+Первый этап уже прошёл [GitHub CI с Testcontainers](https://github.com/KDvibers/FocusDuo/actions/runs/37818507362). Во втором этапе WSL `verify` с Testcontainers и нативный Windows `verify` с отдельной PostgreSQL через `FOCUSDUO_TEST_DB_*` прошли **по 53 теста: 27 unit + 26 integration, без failures/errors/skips**. Отдельно прошли Compose и HTTP smoke собранного JAR из Linux и Windows. CI дополнен теми же Compose/JAR/smoke-шагами, но удалённый запуск новой ветки ещё ожидается. Подробные результаты и ограничения — в HANDOFF.
 
 Дополнительный локальный режим допускает выделенный PostgreSQL 17 без Docker:
 

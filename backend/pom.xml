@@ -4,7 +4,12 @@
   <parent><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-parent</artifactId><version>3.5.16</version><relativePath/></parent>
   <groupId>dev.focusduo</groupId><artifactId>focusduo-backend</artifactId><version>0.1.0</version>
   <name>FocusDuo backend</name>
-  <properties><java.version>21</java.version><testcontainers.version>1.21.4</testcontainers.version></properties>
+  <properties>
+    <java.version>21</java.version>
+    <testcontainers.version>1.21.4</testcontainers.version>
+    <!-- Allow Surefire/Failsafe late expansion when no other plugin supplies JVM arguments. -->
+    <argLine/>
+  </properties>
   <dependencies>
     <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-web</artifactId></dependency>
     <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-websocket</artifactId></dependency>
@@ -22,7 +27,21 @@
   </dependencies>
   <build><plugins>
     <plugin><groupId>org.springframework.boot</groupId><artifactId>spring-boot-maven-plugin</artifactId></plugin>
-    <plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-failsafe-plugin</artifactId><executions><execution><goals><goal>integration-test</goal><goal>verify</goal></goals></execution></executions></plugin>
+    <!-- Resolve the Mockito JAR from Maven's dependencies; do not assume a local repository path. -->
+    <plugin>
+      <groupId>org.apache.maven.plugins</groupId><artifactId>maven-dependency-plugin</artifactId>
+      <executions><execution><id>test-agent-properties</id><phase>initialize</phase><goals><goal>properties</goal></goals></execution></executions>
+    </plugin>
+    <!-- Java 21+ inline mocking uses an explicit startup agent, without dynamic self-attach. -->
+    <plugin>
+      <groupId>org.apache.maven.plugins</groupId><artifactId>maven-surefire-plugin</artifactId>
+      <configuration><argLine>@{argLine} "-javaagent:${org.mockito:mockito-core:jar}"</argLine></configuration>
+    </plugin>
+    <plugin>
+      <groupId>org.apache.maven.plugins</groupId><artifactId>maven-failsafe-plugin</artifactId>
+      <configuration><argLine>@{argLine} "-javaagent:${org.mockito:mockito-core:jar}"</argLine></configuration>
+      <executions><execution><goals><goal>integration-test</goal><goal>verify</goal></goals></execution></executions>
+    </plugin>
   </plugins></build>
   <profiles>
     <profile>
