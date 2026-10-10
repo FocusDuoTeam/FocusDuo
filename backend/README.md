@@ -4,14 +4,28 @@ Java 21, Spring Boot 3.5.16, PostgreSQL 17, Flyway и Maven 3.9.11. Maven Wrappe
 
 Для Linux/WSL дополнительно нужны Bash, `curl` или `wget` и **`unzip`**. Wrapper проверяет закреплённый ZIP-дистрибутив; отсутствие `unzip` нужно исправить установкой утилиты, сохранив checksum. Для Docker-проверок нужны работающий Docker Engine и Compose v2. HTTP smoke использует Python 3.9+ без сторонних пакетов.
 
+## Локальный .env
+
+На Windows из корня репозитория выполните один раз:
+
+```powershell
+.\backend\scripts\init-local.ps1
+```
+
+Команда создаст `.env` по `.env.example` со случайным паролем PostgreSQL. Пароль не выводится; существующий `.env` сохраняется без изменений. Отдельная установка PowerShell 7 не требуется. Если запуск скриптов запрещён политикой вашего компьютера, при отсутствующем `.env` выполните `Copy-Item .env.example .env`, затем `notepad .env` и замените `DB_PASSWORD` своим локальным паролем. При уже существующем `.env` не копируйте пример поверх него.
+
+Для двух клиентов на одном ПК остальные значения примера подходят без изменений: БД на `127.0.0.1:5434`, backend на `127.0.0.1:8090`, сессия 24 часа. `.env` нужен только серверу и исключён из Git. Другу для клиента передаются адрес сервера и контракт; пароль БД и сам `.env` ему не нужны. Учётные записи FocusDuo создаются через регистрацию и имеют собственные пароли.
+
+Если оба разработчика запускают **свои отдельные серверы**, каждый создаёт собственный `.env` и БД. Для совместной комнаты оба клиента должны обращаться к одному серверу. Настройка двух ПК и последовательность приёмки — в [INTEGRATION.md](../docs/backend/INTEGRATION.md).
+
 ## Запуск в PowerShell
 
 Из корня репозитория, с установленными Java 21 и Docker с Linux containers:
 
 ```powershell
-Copy-Item .env.example .env
-notepad .env
-# Замените DB_PASSWORD в .env своим локальным паролем перед продолжением.
+if (-not (Test-Path -LiteralPath .env -PathType Leaf)) {
+    throw 'Сначала создайте .env по разделу «Локальный .env».'
+}
 Get-Content .env | ForEach-Object {
     if ($_ -match '^([A-Z][A-Z0-9_]*)=(.*)$') {
         [Environment]::SetEnvironmentVariable($matches[1], $matches[2], 'Process')
@@ -27,8 +41,8 @@ Set-Location backend
 ## Запуск в bash
 
 ```bash
-cp .env.example .env
-# Отредактируйте .env и замените DB_PASSWORD своим локальным паролем.
+if [ ! -e .env ]; then cp .env.example .env; fi
+# Если файл только что создан из примера, отредактируйте его и замените DB_PASSWORD.
 set -a
 . <(sed 's/\r$//' .env)
 set +a
@@ -132,9 +146,11 @@ python3 backend/scripts/smoke.py --base-url http://127.0.0.1:8090 --wait-seconds
 py -3 backend/scripts/smoke.py --base-url http://127.0.0.1:8090 --wait-seconds 60
 ```
 
-Скрипт выполняет полный HTTP-сценарий двух пользователей, повторяет сохранённые запросы, проверяет историю и отзывает обе сессии. Он создаёт тестовые аккаунты и историю в выбранной БД; записи сохраняются. Подробности и границы проверки — в [scripts/README.md](scripts/README.md). WebSocket, управляемое время, гонки и рестарт покрываются Maven integration tests.
+Скрипт выполняет полный HTTP-сценарий двух пользователей, повторяет сохранённые запросы, проверяет историю и отзывает обе сессии. Он создаёт тестовые аккаунты и историю в выбранной БД; записи сохраняются. Отдельный `scripts/WebSocketSmoke.java` проверяет два подключения к работающему JAR, пропущенное изменение и reconnect, `409`, отзыв сессии `4401` и закрытый snapshot перед закрытием сокета. Команды — в [scripts/README.md](scripts/README.md). Эти инструменты проверяют сервер без Kotlin; сценарий настоящих desktop-клиентов и фиксация результата — в [INTEGRATION.md](../docs/backend/INTEGRATION.md).
 
-Первый этап уже прошёл [GitHub CI с Testcontainers](https://github.com/KDvibers/FocusDuo/actions/runs/37818507362). Во втором этапе WSL `verify` с Testcontainers и нативный Windows `verify` с отдельной PostgreSQL через `FOCUSDUO_TEST_DB_*` прошли **по 53 теста: 27 unit + 26 integration, без failures/errors/skips**. Отдельно прошли Compose и HTTP smoke собранного JAR из Linux и Windows. CI дополнен теми же Compose/JAR/smoke-шагами, но удалённый запуск новой ветки ещё ожидается. Подробные результаты и ограничения — в HANDOFF.
+Во втором этапе WSL `verify` с Testcontainers и нативный Windows `verify` с отдельной PostgreSQL через `FOCUSDUO_TEST_DB_*` прошли **по 53 теста: 27 unit + 26 integration, без failures/errors/skips**. [CI объединённого PR #2](https://github.com/KDvibers/FocusDuo/actions/runs/38070089325) также успешен, включая Compose/JAR HTTP smoke.
+
+При подготовке третьего этапа с новым Compose-volume снова прошёл HTTP smoke из Windows (8 `PASS`); новый WebSocket smoke прошёл из Windows и WSL (по 8 `PASS`). Дополнительный локальный сценарий с двумя принудительными остановками и повторными запусками JAR подтвердил сохранение PAUSED/RUNNING, задач, сессий, результата повторного запроса и единственной записи истории (3 `PASS`). Полный `verify` в этой подготовке не повторялся: production-код и зависимости не менялись. Обновлённый CI с WS smoke ожидает push; настоящий Kotlin-клиент и LAN ещё не проверены. Подробные результаты — в [HANDOFF](../docs/backend/HANDOFF.md).
 
 Дополнительный локальный режим допускает выделенный PostgreSQL 17 без Docker:
 

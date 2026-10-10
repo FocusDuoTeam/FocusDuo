@@ -1,4 +1,16 @@
-# Smoke-проверка запущенного сервера
+# Локальная конфигурация и проверки запущенного сервера
+
+## Создание .env
+
+Из корня репозитория в Windows PowerShell 5.1 или PowerShell 7:
+
+```powershell
+.\backend\scripts\init-local.ps1
+```
+
+Скрипт берёт `.env.example`, заменяет только `DB_PASSWORD` случайным значением из 32 байт и создаёт локальный `.env`. Повторный запуск оставляет существующий файл без изменений, включая его кодировку и пользовательские правки. Пароль не выводится; `.env` и временный файл исключены из Git. Файл публикуется после полной записи без перезаписи существующего. Настройка БД или запуск сервера этой командой не выполняются. Если PostgreSQL уже инициализирован, изменение `.env` само по себе не меняет пароль его роли.
+
+## HTTP smoke
 
 `smoke.py` проверяет HTTP API уже работающего FocusDuo через Python 3.9+ и стандартную библиотеку. Дополнительные Python-пакеты не нужны. Python требуется только для этой проверки; приложение работает на Java 21.
 
@@ -29,3 +41,33 @@ python3 backend/scripts/smoke.py --base-url http://127.0.0.1:8090 --wait-seconds
 Каждый запуск создаёт **двух новых пользователей**, комнату и историю в выбранной БД. Имена имеют префикс `smoke_`; случайные пароли и токены существуют только в памяти и не выводятся. Используйте отдельное тестовое окружение: аккаунты и сохранённая история остаются в БД, поскольку контракт v1 не содержит удаления аккаунта/истории. Скрипт не очищает чужие данные. При ошибке он пытается закрыть текущую комнату своих аккаунтов и выполнить logout; при недоступной сети эта очистка не гарантируется и отмечается `WARN`.
 
 Это проверка собранного приложения реальными HTTP-запросами, без управляемых часов. Она завершает раунды вручную и не ждёт реальных пяти минут. Raw WebSocket, истечение времени, гонки и восстановление после рестарта проверяются Maven integration tests; успешный HTTP smoke сам по себе не подтверждает эти сценарии или запуск Testcontainers.
+
+## WebSocket smoke отдельным клиентским процессом
+
+`WebSocketSmoke.java` подключается к уже работающему серверу через стандартные Java 21 `HttpClient`/`WebSocket`. Jackson берётся из закреплённых зависимостей backend; дополнительных production-зависимостей нет. Для запуска нужен JDK 21, а не только JRE. Сервер работает отдельным процессом; тест не внедряет Spring-компоненты и не изменяет часы.
+
+Из `backend/` в PowerShell:
+
+```powershell
+.\mvnw.cmd --batch-mode --no-transfer-progress dependency:build-classpath '-DincludeArtifactIds=jackson-databind,jackson-core,jackson-annotations' '-Dmdep.outputFile=target/ws-smoke-classpath.txt'
+$wsClasspath = (Get-Content -LiteralPath target/ws-smoke-classpath.txt -Raw).Trim()
+java "-Djdk.net.unixdomain.tmpdir=$((Resolve-Path target).Path)" --class-path $wsClasspath scripts/WebSocketSmoke.java --base-url http://127.0.0.1:8090 --wait-seconds 60
+```
+
+Из `backend/` в Bash/WSL:
+
+```bash
+bash ./mvnw --batch-mode --no-transfer-progress dependency:build-classpath \
+  -DincludeArtifactIds=jackson-databind,jackson-core,jackson-annotations \
+  -Dmdep.outputFile=target/ws-smoke-classpath.txt
+java --class-path "$(cat target/ws-smoke-classpath.txt)" \
+  scripts/WebSocketSmoke.java --base-url http://127.0.0.1:8090 --wait-seconds 60
+```
+
+Генерируйте classpath в той ОС, где запускаете Java: Windows- и Linux-пути и разделители отличаются. Windows-параметр `jdk.net.unixdomain.tmpdir` соответствует обходу короткого имени TEMP, описанному в backend README. `--help` показывает параметры; `--base-url` принимает только HTTP(S) origin без пути API, query или секретов. Успех — exit code 0, ошибка проверки — ненулевой код.
+
+Проверяются два пользователя и две bearer WS-сессии, первые полные снимки, доставка изменения задачи обоим, stale revision → `409 REVISION_CONFLICT`, отключение одного сокета и новое чтение после пропущенного изменения, logout → `4401` только у отозванной сессии, новый login/current, CLOSED snapshot обоим **до** close code 1000 и освобождение членств. Сравниваются состояние и revision; меняющийся `serverNow` проверяется как UTC-время и исключается из сравнения снимков. Этот WS-сценарий работает с задачами без запуска раунда; таймер проверяют HTTP smoke и Maven tests.
+
+Проверка создаёт свои случайные аккаунты и комнату в выбранной БД, закрывает только свои соединения/комнату и отзывает свои токены. Аккаунты остаются в БД; токены и пароли в вывод не попадают. Удалённая очистка при недоступном сервере может не завершиться и отмечается предупреждением. Используйте отдельную тестовую БД. Скрипт не запускает и не останавливает Java-сервер или PostgreSQL.
+
+Это проверка двух логических клиентов в одном CLI-процессе. Настоящий Kotlin UI, сон/пробуждение, транспортные повторы внутри `RealRepository` и маршрут между двумя ПК проверяются отдельно по [INTEGRATION.md](../../docs/backend/INTEGRATION.md). В CI HTTP- и WS-smoke выполняются после `verify` против собранного JAR и отдельной Compose-БД.
