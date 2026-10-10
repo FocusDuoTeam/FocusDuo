@@ -10,4 +10,4 @@
 
 Области ответственности: `backend/`, `docs/backend/`, `docs/contracts/`, корневые инфраструктурные файлы и backend CI — Java-разработчик; `desktop/` — Kotlin-разработчик в отдельной рабочей копии. Общий протокол меняется только согласованно. Сборку и CI desktop добавляет её владелец отдельно.
 
-Репозиторий: [KDvibers/FocusDuo](https://github.com/KDvibers/FocusDuo). Работа разделена на [три этапа с отдельными PR](docs/backend/ROADMAP.md). Первый PR готовится из `feat/backend-mvp` в `main`: изменения фиксируются локально, push выполняет владелец проекта, затем открывается PR для review и проверок. Автоматические push и merge не выполняются.
+Репозиторий: [KDvibers/FocusDuo](https://github.com/KDvibers/FocusDuo). Работа разделена на [три этапа с отдельными PR](docs/backend/ROADMAP.md). Первый PR объединён; второй этап готовится в `feat/backend-stage-2`: проверка Docker/CI и воспроизводимого запуска. Изменения фиксируются локально, push выполняет владелец проекта, затем открывается PR для review и проверок. Автоматические push и merge не выполняются.
