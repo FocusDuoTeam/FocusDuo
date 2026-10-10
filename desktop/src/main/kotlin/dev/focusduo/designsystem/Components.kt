@@ -71,7 +71,7 @@ fun DemoBadge(modifier: Modifier = Modifier) {
     }
 }
 
-enum class FocusIcon { Home, Check, Arrow, Leaf }
+enum class FocusIcon { Home, Check, Arrow, Leaf, People }
 
 /** Small consistent outline icons, drawn as Compose primitives rather than platform glyphs. */
 @Composable
@@ -100,6 +100,24 @@ fun FocusIcon(icon: FocusIcon, modifier: Modifier = Modifier, color: Color = Foc
                 }
                 drawPath(path, color, style = Stroke(1.7f * scale))
                 line(4f, 21f, 15f, 10f)
+            }
+            FocusIcon.People -> {
+                drawCircle(color, 3f * scale, point(9f, 7f), style = Stroke(1.7f * scale))
+                drawCircle(color, 2.4f * scale, point(17.5f, 8f), style = Stroke(1.7f * scale))
+                val first = Path().apply {
+                    moveTo(2f * scale, 21f * scale)
+                    lineTo(2f * scale, 18f * scale)
+                    cubicTo(2f * scale, 12f * scale, 16f * scale, 12f * scale, 16f * scale, 18f * scale)
+                    lineTo(16f * scale, 21f * scale)
+                    close()
+                }
+                drawPath(first, color, style = Stroke(1.7f * scale, cap = StrokeCap.Round))
+                val second = Path().apply {
+                    moveTo(18f * scale, 14f * scale)
+                    cubicTo(23f * scale, 14f * scale, 22f * scale, 18f * scale, 22f * scale, 21f * scale)
+                    lineTo(19f * scale, 21f * scale)
+                }
+                drawPath(second, color, style = Stroke(1.7f * scale, cap = StrokeCap.Round))
             }
         }
     }
