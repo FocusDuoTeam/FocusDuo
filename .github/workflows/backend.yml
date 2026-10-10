@@ -56,12 +56,20 @@ jobs:
       - name: Start a fresh Compose database
         working-directory: .
         run: docker compose up -d --wait --wait-timeout 90 db
-      - name: Exercise the packaged server through HTTP
+      - name: Exercise the packaged server through HTTP and WebSocket
         working-directory: .
         run: |
           java -jar backend/target/focusduo-backend-0.1.0.jar > backend/target/smoke-server.log 2>&1 &
           echo $! > backend/target/smoke-server.pid
           python3 backend/scripts/smoke.py --wait-seconds 60
+          (
+            cd backend
+            bash ./mvnw --batch-mode --no-transfer-progress dependency:build-classpath \
+              -DincludeArtifactIds=jackson-databind,jackson-core,jackson-annotations \
+              -Dmdep.outputFile=target/ws-smoke-classpath.txt
+          )
+          java --class-path "$(cat backend/target/ws-smoke-classpath.txt)" \
+            backend/scripts/WebSocketSmoke.java --wait-seconds 60
       - name: Stop the smoke server and collect Compose logs
         if: always()
         working-directory: .
